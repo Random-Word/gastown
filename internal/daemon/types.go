@@ -10,6 +10,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -118,10 +119,13 @@ type PatrolsConfig struct {
 	Deacon         *PatrolConfig          `json:"deacon,omitempty"`
 	Handler        *PatrolConfig          `json:"handler,omitempty"`
 	DoltServer     *DoltServerConfig      `json:"dolt_server,omitempty"`
+	DoltTestServer *DoltServerConfig      `json:"dolt_test_server,omitempty"`
 	DoltRemotes    *DoltRemotesConfig     `json:"dolt_remotes,omitempty"`
 	DoltBackup     *DoltBackupConfig      `json:"dolt_backup,omitempty"`
 	JsonlGitBackup *JsonlGitBackupConfig  `json:"jsonl_git_backup,omitempty"`
 	WispReaper     *WispReaperConfig      `json:"wisp_reaper,omitempty"`
+	DoctorDog      *DoctorDogConfig       `json:"doctor_dog,omitempty"`
+	JanitorDog     *JanitorDogConfig      `json:"janitor_dog,omitempty"`
 }
 
 // DoltRemotesConfig holds configuration for the dolt_remotes patrol.
@@ -178,6 +182,11 @@ type JsonlGitBackupConfig struct {
 	// Scrub controls whether ephemeral data is filtered out.
 	// Default: true
 	Scrub *bool `json:"scrub,omitempty"`
+
+	// SpikeThreshold is the maximum allowed percentage change in record counts
+	// between consecutive exports. If the delta exceeds this threshold (in either
+	// direction), the export is halted and escalated. Default: 0.20 (20%).
+	SpikeThreshold *float64 `json:"spike_threshold,omitempty"`
 }
 
 // DaemonPatrolConfig is the structure of mayor/daemon.json.
@@ -208,6 +217,8 @@ func LoadPatrolConfig(townRoot string) *DaemonPatrolConfig {
 
 	var config DaemonPatrolConfig
 	if err := json.Unmarshal(data, &config); err != nil {
+		// Log parse errors to help debug config issues (was previously silent).
+		fmt.Fprintf(os.Stderr, "daemon: failed to parse %s: %v\n", configFile, err)
 		return nil
 	}
 	return &config
@@ -243,6 +254,18 @@ func IsPatrolEnabled(config *DaemonPatrolConfig, patrol string) bool {
 			return false
 		}
 		return config.Patrols.WispReaper.Enabled
+	}
+	if patrol == "doctor_dog" {
+		if config == nil || config.Patrols == nil || config.Patrols.DoctorDog == nil {
+			return false
+		}
+		return config.Patrols.DoctorDog.Enabled
+	}
+	if patrol == "janitor_dog" {
+		if config == nil || config.Patrols == nil || config.Patrols.JanitorDog == nil {
+			return false
+		}
+		return config.Patrols.JanitorDog.Enabled
 	}
 
 	if config == nil || config.Patrols == nil {

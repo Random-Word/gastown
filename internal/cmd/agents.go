@@ -201,7 +201,7 @@ type socketGroup struct {
 // These sockets are created by TestMain in packages that need tmux isolation.
 // Only sockets with a running tmux server (i.e., ListSessions succeeds) are returned.
 func findTestSockets() []string {
-	socketDir := filepath.Join(os.TempDir(), fmt.Sprintf("tmux-%d", os.Getuid()))
+	socketDir := tmux.SocketDir()
 	entries, err := os.ReadDir(socketDir)
 	if err != nil {
 		return nil
