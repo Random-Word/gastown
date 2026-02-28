@@ -20,6 +20,8 @@ var (
 	// Commit and Branch - the git revision the binary was built from (optional ldflag)
 	Commit = ""
 	Branch = ""
+	// BuildTime is the UTC timestamp when the binary was built (set via ldflags).
+	BuildTime = ""
 	// BuiltProperly is set to "1" by `make build`. If empty, the binary was built
 	// with raw `go build` and is likely unsigned (will be killed on macOS).
 	BuiltProperly = ""

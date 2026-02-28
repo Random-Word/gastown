@@ -42,6 +42,7 @@ across distributed teams of AI agents working on shared codebases.`, cmdName)
 // These commands should work even when bd is missing or outdated.
 var beadsExemptCommands = map[string]bool{
 	"version":    true,
+	"build-info": true,
 	"help":       true,
 	"completion": true,
 	"crew":       true,
