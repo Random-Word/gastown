@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/steveyegge/gastown/internal/claude"
 )
@@ -53,16 +54,32 @@ func EnsureHooksAt(workDir, role, hooksDir, hooksFile string) error {
 		templateData = hooksInteractiveJSON
 	}
 
-	// Template the guard script path using the actual hooksDir
-	guardRef := filepath.ToSlash(filepath.Join(hooksDir, "gastown-pretool-guard.sh"))
-	templateData = bytes.Replace(templateData,
-		[]byte(".github/hooks/gastown-pretool-guard.sh"), []byte(guardRef), -1)
-
-	// Validate the template is valid JSON
+	// Parse template as a typed struct instead of raw bytes manipulation.
+	// This avoids JSON injection risks from hooksDir values containing
+	// double-quotes or shell metacharacters.
 	var config hooksConfig
-	if err := json.Unmarshal(templateData, &config); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(templateData))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&config); err != nil {
 		return fmt.Errorf("invalid hooks template: %w", err)
 	}
+
+	// Template the guard script path using the actual hooksDir
+	guardRef := filepath.ToSlash(filepath.Join(hooksDir, "gastown-pretool-guard.sh"))
+	const defaultGuardPath = ".github/hooks/gastown-pretool-guard.sh"
+	if entries, ok := config.Hooks["preToolUse"]; ok {
+		for i, entry := range entries {
+			config.Hooks["preToolUse"][i].Bash = strings.Replace(
+				entry.Bash, defaultGuardPath, guardRef, 1)
+		}
+	}
+
+	// Marshal back to JSON
+	hooksJSON, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling hooks config: %w", err)
+	}
+	hooksJSON = append(hooksJSON, '\n')
 
 	// Write hooks JSON file
 	hooksPath := filepath.Join(targetDir, hooksFile)
@@ -70,7 +87,7 @@ func EnsureHooksAt(workDir, role, hooksDir, hooksFile string) error {
 		if err := os.MkdirAll(targetDir, 0755); err != nil {
 			return fmt.Errorf("creating copilot hooks directory: %w", err)
 		}
-		if err := os.WriteFile(hooksPath, templateData, 0644); err != nil {
+		if err := os.WriteFile(hooksPath, hooksJSON, 0644); err != nil {
 			return fmt.Errorf("writing copilot hooks: %w", err)
 		}
 	} else if err != nil {

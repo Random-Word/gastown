@@ -314,3 +314,51 @@ func TestEnsureHooksAt_EmptyParameters(t *testing.T) {
 		}
 	})
 }
+
+func TestEnsureHooksAt_SpecialCharsInPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		hooksDir string
+	}{
+		{"double quotes", `path/with"quotes`},
+		{"shell metachar", `path/with$(cmd)`},
+		{"backticks", "path/with`cmd`"},
+		{"semicolon", `path/with;rm -rf /`},
+		{"ampersand", `path/with&&evil`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			err := EnsureHooksAt(tmpDir, "polecat", tt.hooksDir, "gastown.json")
+			if err != nil {
+				t.Fatalf("EnsureHooksAt() error = %v", err)
+			}
+
+			hooksPath := filepath.Join(tmpDir, tt.hooksDir, "gastown.json")
+			content, err := os.ReadFile(hooksPath)
+			if err != nil {
+				t.Fatalf("Failed to read hooks file: %v", err)
+			}
+
+			// Output must always be valid JSON regardless of hooksDir content
+			var config hooksConfig
+			if err := json.Unmarshal(content, &config); err != nil {
+				t.Fatalf("Output is not valid JSON with hooksDir %q: %v", tt.hooksDir, err)
+			}
+
+			// Guard path should appear properly escaped in the Bash field
+			preToolUse := config.Hooks["preToolUse"]
+			if len(preToolUse) == 0 {
+				t.Fatal("Missing preToolUse hooks")
+			}
+			expectedPath := filepath.ToSlash(filepath.Join(tt.hooksDir, "gastown-pretool-guard.sh"))
+			if !strings.Contains(preToolUse[0].Bash, expectedPath) {
+				t.Errorf("preToolUse guard path should contain %q, got: %s", expectedPath, preToolUse[0].Bash)
+			}
+			// Must not contain the default hardcoded path
+			if strings.Contains(preToolUse[0].Bash, ".github/hooks/gastown-pretool-guard.sh") {
+				t.Error("preToolUse should not contain hardcoded .github/hooks path")
+			}
+		})
+	}
+}
