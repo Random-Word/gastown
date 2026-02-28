@@ -35,6 +35,7 @@ var statusFast bool
 var statusWatch bool
 var statusInterval int
 var statusVerbose bool
+var statusQuiet bool
 
 var statusCmd = &cobra.Command{
 	Use:     "status",
@@ -56,6 +57,7 @@ func init() {
 	statusCmd.Flags().BoolVarP(&statusWatch, "watch", "w", false, "Watch mode: refresh status continuously")
 	statusCmd.Flags().IntVarP(&statusInterval, "interval", "n", 2, "Refresh interval in seconds")
 	statusCmd.Flags().BoolVarP(&statusVerbose, "verbose", "v", false, "Show detailed multi-line output per agent")
+	statusCmd.Flags().BoolVarP(&statusQuiet, "quiet", "q", false, "Output single-line health summary for scripting")
 	rootCmd.AddCommand(statusCmd)
 }
 
@@ -576,10 +578,63 @@ func countRunningAgents(s TownStatus) int {
 	return count
 }
 
+// countTotalAgents returns the total number of agents (running or not)
+// across all global agents and rig agents in the status.
+func countTotalAgents(s TownStatus) int {
+	count := len(s.Agents)
+	for _, r := range s.Rigs {
+		count += len(r.Agents)
+	}
+	return count
+}
+
+// outputStatusQuiet prints a single-line health summary suitable for scripting.
+// Exits with code 1 when any services are down.
+func outputStatusQuiet(status TownStatus) error {
+	healthy := writeQuietStatus(os.Stdout, status)
+	if !healthy {
+		os.Exit(1)
+	}
+	return nil
+}
+
+// writeQuietStatus writes a single-line health summary to w.
+// Returns true if all services are healthy, false otherwise.
+func writeQuietStatus(w io.Writer, status TownStatus) bool {
+	total := countTotalAgents(status)
+	running := countRunningAgents(status)
+
+	if running == total {
+		fmt.Fprintf(w, "OK: %d/%d services running\n", running, total)
+		return true
+	}
+
+	var down []string
+	for _, a := range status.Agents {
+		if !a.Running {
+			down = append(down, a.Name)
+		}
+	}
+	for _, r := range status.Rigs {
+		for _, a := range r.Agents {
+			if !a.Running {
+				down = append(down, a.Name)
+			}
+		}
+	}
+
+	fmt.Fprintf(w, "WARN: %d/%d services running (%s)\n",
+		running, total, strings.Join(down, ", "))
+	return false
+}
+
 func runStatusOnce(_ *cobra.Command, _ []string) error {
 	status, err := gatherStatus()
 	if err != nil {
 		return err
+	}
+	if statusQuiet {
+		return outputStatusQuiet(status)
 	}
 	if statusJSON {
 		return outputStatusJSON(status)

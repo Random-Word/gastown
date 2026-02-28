@@ -526,3 +526,78 @@ func TestExtractBaseName(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteQuietStatus_AllHealthy(t *testing.T) {
+	t.Parallel()
+	status := TownStatus{
+		Agents: []AgentRuntime{
+			{Name: "mayor", Running: true},
+			{Name: "deacon", Running: true},
+		},
+		Rigs: []RigStatus{
+			{
+				Agents: []AgentRuntime{
+					{Name: "witness", Running: true},
+					{Name: "polecat-1", Running: true},
+					{Name: "polecat-2", Running: true},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	healthy := writeQuietStatus(&buf, status)
+	if !healthy {
+		t.Fatal("expected healthy=true when all services running")
+	}
+	got := buf.String()
+	want := "OK: 5/5 services running\n"
+	if got != want {
+		t.Errorf("writeQuietStatus() = %q, want %q", got, want)
+	}
+}
+
+func TestWriteQuietStatus_SomeDown(t *testing.T) {
+	t.Parallel()
+	status := TownStatus{
+		Agents: []AgentRuntime{
+			{Name: "mayor", Running: true},
+		},
+		Rigs: []RigStatus{
+			{
+				Agents: []AgentRuntime{
+					{Name: "witness", Running: false},
+					{Name: "polecat-1", Running: true},
+					{Name: "refinery", Running: false},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	healthy := writeQuietStatus(&buf, status)
+	if healthy {
+		t.Fatal("expected healthy=false when some services are down")
+	}
+	got := buf.String()
+	want := "WARN: 2/4 services running (witness, refinery)\n"
+	if got != want {
+		t.Errorf("writeQuietStatus() = %q, want %q", got, want)
+	}
+}
+
+func TestWriteQuietStatus_Empty(t *testing.T) {
+	t.Parallel()
+	status := TownStatus{}
+
+	var buf bytes.Buffer
+	healthy := writeQuietStatus(&buf, status)
+	if !healthy {
+		t.Fatal("expected healthy=true when no services configured")
+	}
+	got := buf.String()
+	want := "OK: 0/0 services running\n"
+	if got != want {
+		t.Errorf("writeQuietStatus() = %q, want %q", got, want)
+	}
+}
