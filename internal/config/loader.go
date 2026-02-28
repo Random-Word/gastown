@@ -1554,6 +1554,7 @@ func fillRuntimeDefaults(rc *RuntimeConfig) *RuntimeConfig {
 		Command:       rc.Command,
 		InitialPrompt: rc.InitialPrompt,
 		PromptMode:    rc.PromptMode,
+		PromptFlag:    rc.PromptFlag,
 		ResolvedAgent: rc.ResolvedAgent,
 	}
 
@@ -1644,6 +1645,11 @@ func fillRuntimeDefaults(rc *RuntimeConfig) *RuntimeConfig {
 		if result.PromptMode == "" {
 			result.PromptMode = "arg"
 		}
+	}
+
+	// Auto-fill PromptFlag from preset if not set.
+	if result.PromptFlag == "" && preset != nil && preset.PromptFlag != "" {
+		result.PromptFlag = preset.PromptFlag
 	}
 
 	// Auto-fill Env defaults from preset.
