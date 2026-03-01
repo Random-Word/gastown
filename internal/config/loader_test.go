@@ -3175,6 +3175,46 @@ func TestBuildCommandWithPromptRespectsPromptModeNone(t *testing.T) {
 	}
 }
 
+func TestBuildCommandWithPromptUsesFileForLargePrompts(t *testing.T) {
+	t.Parallel()
+
+	// Build a prompt larger than maxInlinePromptLen
+	largePrompt := strings.Repeat("A", maxInlinePromptLen+1000)
+
+	rc := &RuntimeConfig{
+		Command:    "copilot",
+		Args:       []string{},
+		PromptFlag: "-i",
+	}
+
+	cmd := rc.BuildCommandWithPrompt(largePrompt)
+
+	// Should use $(cat ...) instead of inline quoting
+	if !strings.Contains(cmd, "$(cat '") {
+		t.Fatalf("large prompt should use file-based delivery, got: %s", cmd[:min(len(cmd), 200)])
+	}
+	if !strings.Contains(cmd, "gt-prompt-") {
+		t.Errorf("temp file should have gt-prompt- prefix, got: %s", cmd[:min(len(cmd), 200)])
+	}
+	if !strings.Contains(cmd, "&& rm -f") {
+		t.Errorf("command should clean up temp file, got: %s", cmd[:min(len(cmd), 200)])
+	}
+
+	// The prompt flag should still be present
+	if !strings.Contains(cmd, "-i") {
+		t.Errorf("PromptFlag -i should be present, got: %s", cmd[:min(len(cmd), 200)])
+	}
+
+	// Small prompt should still be inline
+	smallCmd := rc.BuildCommandWithPrompt("hello world")
+	if strings.Contains(smallCmd, "$(cat") {
+		t.Errorf("small prompt should be inline, got: %s", smallCmd)
+	}
+	if !strings.Contains(smallCmd, `"hello world"`) {
+		t.Errorf("small prompt should be quoted inline, got: %s", smallCmd)
+	}
+}
+
 // TestRoleAgentConfigWithCustomAgent tests role-based agent resolution with
 // custom agents that have special settings like prompt_mode: "none".
 //

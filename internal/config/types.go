@@ -759,11 +759,20 @@ func (rc *RuntimeConfig) BuildCommand() string {
 	return cmd
 }
 
+// maxInlinePromptLen is the threshold above which prompts are written to a temp
+// file and delivered via $(cat file) instead of inline shell quoting. Tmux's
+// respawn-pane has a command-length limit (~64KB depending on version/platform)
+// and large inline prime context easily exceeds it.
+const maxInlinePromptLen = 8192
+
 // BuildCommandWithPrompt returns the full command line with an initial prompt.
 // If the config has an InitialPrompt, it's appended as a quoted argument.
 // If prompt is provided, it overrides the config's InitialPrompt.
 // When PromptFlag is set, uses that flag (e.g., "-i" for copilot, "--prompt" for opencode).
 // Otherwise falls back to positional argument.
+//
+// For prompts exceeding maxInlinePromptLen, the prompt is written to a temp file
+// and delivered via shell command substitution to avoid tmux command-length limits.
 func (rc *RuntimeConfig) BuildCommandWithPrompt(prompt string) string {
 	resolved := normalizeRuntimeConfig(rc)
 	base := resolved.BuildCommand()
@@ -778,9 +787,11 @@ func (rc *RuntimeConfig) BuildCommandWithPrompt(prompt string) string {
 		return base
 	}
 
+	promptArg := promptShellArg(p)
+
 	// Use PromptFlag when set (e.g., copilot -i, opencode --prompt).
 	if resolved.PromptFlag != "" {
-		return base + " " + resolved.PromptFlag + " " + quoteForShell(p)
+		return base + " " + resolved.PromptFlag + " " + promptArg
 	}
 
 	// Copilot  requires -i flag for initial prompt in interactive mode.
@@ -789,7 +800,32 @@ func (rc *RuntimeConfig) BuildCommandWithPrompt(prompt string) string {
 	}
 
 	// Quote the prompt for shell safety (positional arg for claude and others)
-	return base + " " + quoteForShell(p)
+	return base + " " + promptArg
+}
+
+// promptShellArg returns a shell expression for the given prompt. Short prompts
+// are inline-quoted. Long prompts are written to a temp file and referenced via
+// "$(cat /path/to/file)" to stay under tmux's command-length limit.
+func promptShellArg(prompt string) string {
+	if len(prompt) <= maxInlinePromptLen {
+		return quoteForShell(prompt)
+	}
+
+	f, err := os.CreateTemp("", "gt-prompt-*.txt")
+	if err != nil {
+		// Fall back to inline if temp file creation fails
+		return quoteForShell(prompt)
+	}
+	if _, err := f.WriteString(prompt); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return quoteForShell(prompt)
+	}
+	f.Close()
+
+	// $(cat ...) reads the file at shell execution time, then removes it.
+	// The subshell ensures cleanup even if the agent process crashes.
+	return `"$(cat '` + f.Name() + `' && rm -f '` + f.Name() + `')"` //nolint:gocritic
 }
 
 // BuildArgsWithPrompt returns the runtime command and args suitable for exec.
