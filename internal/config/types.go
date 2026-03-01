@@ -811,21 +811,43 @@ func promptShellArg(prompt string) string {
 		return quoteForShell(prompt)
 	}
 
-	f, err := os.CreateTemp("", "gt-prompt-*.txt")
+	// Write the prompt to a temp file. The file is read at shell execution
+	// time via a self-deleting wrapper script, keeping the tmux command short.
+	promptFile, err := os.CreateTemp("", "gt-prompt-*.txt")
 	if err != nil {
-		// Fall back to inline if temp file creation fails
 		return quoteForShell(prompt)
 	}
-	if _, err := f.WriteString(prompt); err != nil {
-		f.Close()
-		os.Remove(f.Name())
+	if _, err := promptFile.WriteString(prompt); err != nil {
+		promptFile.Close()
+		os.Remove(promptFile.Name())
 		return quoteForShell(prompt)
 	}
-	f.Close()
+	promptFile.Close()
 
-	// $(cat ...) reads the file at shell execution time, then removes it.
-	// The subshell ensures cleanup even if the agent process crashes.
-	return `"$(cat '` + f.Name() + `' && rm -f '` + f.Name() + `')"` //nolint:gocritic
+	// Write a small wrapper script that cats the prompt and cleans up both
+	// files. Using a #!/bin/sh script avoids shell-compatibility issues
+	// (fish, tcsh) with $(...) command substitution in the tmux command line.
+	script, err := os.CreateTemp("", "gt-prompt-reader-*.sh")
+	if err != nil {
+		os.Remove(promptFile.Name())
+		return quoteForShell(prompt)
+	}
+	pPath := shellQuoteSingle(promptFile.Name())
+	sPath := shellQuoteSingle(script.Name())
+	// Uses ; instead of && so cleanup runs even if cat fails.
+	fmt.Fprintf(script, "#!/bin/sh\ncat %s; rm -f %s %s\n", pPath, pPath, sPath)
+	script.Close()
+	os.Chmod(script.Name(), 0o700)
+
+	// Return $(/path/to/script) which all POSIX shells and fish 3.4+ support.
+	// The script uses #!/bin/sh explicitly for portability.
+	return `"$(` + sPath + `)"` //nolint:gocritic
+}
+
+// shellQuoteSingle wraps a string in single quotes, escaping any embedded
+// single quotes with the standard '\'' pattern.
+func shellQuoteSingle(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // BuildArgsWithPrompt returns the runtime command and args suitable for exec.
