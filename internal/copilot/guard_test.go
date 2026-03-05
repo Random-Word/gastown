@@ -29,8 +29,32 @@ func TestGuardScript_NonBashToolPassesThrough(t *testing.T) {
 	}
 }
 
-// TestGuardScript_NonMatchingBashPassesThrough verifies non-matching bash commands pass.
+// TestGuardScript_NonMatchingBashPassesThrough verifies non-matching bash commands pass
+// when gt is available on PATH.
 func TestGuardScript_NonMatchingBashPassesThrough(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not available")
+	}
+
+	guardPath := writeGuardScript(t)
+	gtStubDir := writeGtStub(t)
+	input := `{"toolName":"bash","toolArgs":{"command":"ls -la"}}`
+
+	cmd := exec.Command("bash", guardPath)
+	cmd.Stdin = strings.NewReader(input)
+	cmd.Env = appendGtToPath(gtStubDir)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Guard script failed for non-matching bash: %v\nOutput: %s", err, output)
+	}
+	if strings.TrimSpace(string(output)) != "" {
+		t.Errorf("Non-matching bash should produce no output, got: %q", string(output))
+	}
+}
+
+// TestGuardScript_DeniesAllBashWhenGtMissing verifies fail-closed behavior:
+// all bash commands are denied when gt is not in PATH.
+func TestGuardScript_DeniesAllBashWhenGtMissing(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("jq not available")
 	}
@@ -40,12 +64,18 @@ func TestGuardScript_NonMatchingBashPassesThrough(t *testing.T) {
 
 	cmd := exec.Command("bash", guardPath)
 	cmd.Stdin = strings.NewReader(input)
+	// Use a PATH that definitely does not contain gt
+	cmd.Env = pathWithoutGt()
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("Guard script failed for non-matching bash: %v\nOutput: %s", err, output)
+		t.Fatalf("Guard script failed: %v\nOutput: %s", err, output)
 	}
-	if strings.TrimSpace(string(output)) != "" {
-		t.Errorf("Non-matching bash should produce no output, got: %q", string(output))
+	out := strings.TrimSpace(string(output))
+	if !strings.Contains(out, `"permissionDecision":"deny"`) {
+		t.Errorf("Expected deny when gt is missing, got: %q", out)
+	}
+	if !strings.Contains(out, "fail-closed") {
+		t.Errorf("Expected fail-closed reason in deny output, got: %q", out)
 	}
 }
 
@@ -133,4 +163,43 @@ func writeGuardScript(t *testing.T) string {
 		t.Fatalf("Failed to write guard script: %v", err)
 	}
 	return guardPath
+}
+
+// writeGtStub creates a minimal gt executable stub in a temp directory
+// and returns the directory path. Use with appendGtToPath to add it to PATH.
+func writeGtStub(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	stubPath := filepath.Join(dir, "gt")
+	stub := []byte("#!/bin/bash\nexit 0\n")
+	if err := os.WriteFile(stubPath, stub, 0755); err != nil {
+		t.Fatalf("Failed to write gt stub: %v", err)
+	}
+	return dir
+}
+
+// appendGtToPath returns an environment with the gt stub directory prepended to PATH.
+// Preserves all other environment variables needed for the guard script (jq, bash, etc.).
+func appendGtToPath(gtDir string) []string {
+	env := os.Environ()
+	for i, e := range env {
+		if strings.HasPrefix(e, "PATH=") {
+			env[i] = "PATH=" + gtDir + ":" + e[5:]
+			return env
+		}
+	}
+	return append(env, "PATH="+gtDir+":/usr/bin:/bin")
+}
+
+// pathWithoutGt returns an environment with PATH set to only essential system
+// directories (no gt). Used to test fail-closed behavior.
+func pathWithoutGt() []string {
+	env := os.Environ()
+	for i, e := range env {
+		if strings.HasPrefix(e, "PATH=") {
+			env[i] = "PATH=/usr/bin:/bin"
+			return env
+		}
+	}
+	return append(env, "PATH=/usr/bin:/bin")
 }
